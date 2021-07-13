@@ -27,24 +27,28 @@ import SessionState
 # ---------------------
 
 # Business Logic
-# TODO: Simple Collage Function, Input Images are the same size.
 @st.cache
-def process(inputs):
+def process(inputs: SessionState) -> Image:
   # inputs: data struct
 
-  primary_img = cv2.imread(str(inputs.primary_img_path))
-  depth_img = cv2.imread(str(inputs.depth_img_path))
+  # Uploaded files must be read from PIL first, before converting to cv2.
+  primary_img = convert_from_image_to_cv2(Image.open(inputs.primary_img_path))
+  depth_img = convert_from_image_to_cv2(Image.open(inputs.depth_img_path))
+  
+  # Psuedo Processing 
   stacked_img = np.vstack([primary_img, depth_img])
   if inputs.ev_img_path != BLANK_PLACEHOLDER:
     ev_img = cv2.imread(str(inputs.ev_img_path))
     stacked_img = np.vstack([primary_img, depth_img, ev_img])
   stacked_img = increase_brightness(stacked_img, inputs.temporary_brightness)
-  stacked_img = Image.fromarray(np.uint8(stacked_img))
+
+  # Convert back to PIL-Streamlit standard. 
+  stacked_img = convert_from_cv2_to_image(stacked_img)  
   return stacked_img
 
 # Temporary 
-def increase_brightness(img, value):
-    hsv = cv2.cvtColor(img, cv2.COLOR_BGR2HSV)
+def increase_brightness(img: np.ndarray, value: int) -> np.ndarray:
+    hsv = cv2.cvtColor(img, cv2.COLOR_RGB2HSV)
     h, s, v = cv2.split(hsv)
 
     lim = 255 - value
@@ -56,21 +60,20 @@ def increase_brightness(img, value):
     return img
 
 # Utils
-def get_image_download_link(img,filename,text):
-    # img: PIL image
-    # filename: string, download image name
-    # text: string, hyperlink text
+def convert_from_cv2_to_image(img: np.ndarray) -> Image:
+    return Image.fromarray(img)
 
+def convert_from_image_to_cv2(img: Image) -> np.ndarray:
+    return np.asarray(img)
+
+def get_image_download_link(output_img: Image, filename: str, hyperlink_name: str) -> str: 
     buffered = BytesIO()
-    img.save(buffered, format="JPEG")
+    output_img.save(buffered, format="JPEG")
     img_str = base64.b64encode(buffered.getvalue()).decode()
-    href =  f'<a href="data:file/txt;base64,{img_str}" download="{filename}" style="float: right;">{text}</a>'
+    href =  f'<a href="data:file/txt;base64,{img_str}" download="{filename}" style="float: right;">{hyperlink_name}</a>'
     return href
 
-def record_test_case(inputs, output):
-  # inputs: data struct
-  # output: PIL Image
-
+def record_test_case(inputs: SessionState, output: Image) -> None:
   # Make Folder 
   test_dir = Path.cwd() / 'tests'
   if not test_dir.exists():
@@ -92,8 +95,8 @@ FStop: {inputs.fstop}
 Image Format: {inputs.image_format}
 Depth Format: {inputs.depth_format}'''
     f.write(text)
-  
-  # Write Images
+
+  # Write Images Locally, use aws sync to send to S3 bucket. 
   Image.open(inputs.primary_img_path).save(test_case / 'primary_image.jpg')
   Image.open(inputs.depth_img_path).save(test_case / 'depth_image.jpg')
   if inputs.ev_img_path != BLANK_PLACEHOLDER:
@@ -111,7 +114,8 @@ SAMPLE_IMAGES = {'Flatiron Image': {'primary': Path('images/flatiron.jpg'),
                              'depth': Path('images/toucan.jpg'),
                              'ev': Path('images/toucan.jpg')}} 
 BLANK_PLACEHOLDER = Path('images/blank_image.png')
-inputs = SessionState.get(primary_img_path = BLANK_PLACEHOLDER,
+inputs = SessionState.get(pwd = '',
+                        primary_img_path = BLANK_PLACEHOLDER,
                         depth_img_path = BLANK_PLACEHOLDER,
                         ev_img_path = BLANK_PLACEHOLDER,
                         user_upload = False,
@@ -124,23 +128,28 @@ inputs = SessionState.get(primary_img_path = BLANK_PLACEHOLDER,
                         depth_format = None, 
                         temporary_brightness = 0)
 
-# Inputs
-st.sidebar.title("Image Processing Demo")
-image_set = st.sidebar.selectbox('Image Set', list(SAMPLE_IMAGES.keys()) + ['Custom Images'])
-# Set Input Image Paths
-if image_set == "Custom Images": 
-  # Reset Input Image Paths
-  if inputs.user_upload is False:
-    inputs.primary_img_path = BLANK_PLACEHOLDER
-    inputs.depth_img_path = BLANK_PLACEHOLDER
-    inputs.ev_img_path = BLANK_PLACEHOLDER
-  with st.sidebar.beta_container():
+def main() -> None: 
+  # Inputs
+  st.sidebar.title("Image Processing Demo")
+  image_set = st.sidebar.selectbox('Image Set', list(SAMPLE_IMAGES.keys()) + ['Custom Images'])
+  
+  # Custom Input Images
+  if image_set == "Custom Images": 
+    # Reset Input Image Paths
+    if inputs.user_upload is False:
+      inputs.primary_img_path = BLANK_PLACEHOLDER
+      inputs.depth_img_path = BLANK_PLACEHOLDER
+      inputs.ev_img_path = BLANK_PLACEHOLDER
+
+    # Image Form
     custom_image_widget = st.sidebar.form(key='image_form')
     with custom_image_widget:
       primary_temp = st.file_uploader("New Primary Image")
       depth_temp = st.file_uploader("New Depth Image")
       ev_temp = st.file_uploader("New EV Image (Optional)")
       image_submit_button = custom_image_widget.form_submit_button(label='Submit')
+
+    # Save Image Paths
     if image_submit_button:
       # TODO: Add Type Check Input Verification to this if  
       if primary_temp is not None and depth_temp is not None:
@@ -148,56 +157,80 @@ if image_set == "Custom Images":
         inputs.depth_img_path = depth_temp
         if ev_temp is not None: 
           inputs.ev_img_path = ev_temp
-        inputs.user_upload = True
+        inputs.user_upload = True  # Prevent reset after custom images uploaded
       else:
-        st.text('Please provide a primary and depth image.')
+        st.sidebar.text('Please provide a primary and depth image.')
+  
+  # Otherwise, use sample images
+  else:
+    inputs.primary_img_path = SAMPLE_IMAGES[image_set]['primary']
+    inputs.depth_img_path = SAMPLE_IMAGES[image_set]['depth']
+    inputs.ev_img_path = SAMPLE_IMAGES[image_set]['ev']
+    inputs.user_upload = False
+
+  # Set Input Parameters, TODO: Add defaults
+  form = st.sidebar.form(key='settings') 
+  inputs.ev = form.radio('EV Image', ['Yes', 'No']) 
+  inputs.focus_coordinates = form.text_input('Focus Coordinates')
+  inputs.lens_simulation = form.text_input('Lens Simulation')
+  inputs.dof = form.text_input('Depth of Field')
+  inputs.fstop = form.text_input('FStop')
+  inputs.image_format = form.text_input('Image Format')
+  inputs.depth_format = form.text_input('Depth Format')
+  inputs.temporary_brightness = form.slider('Temporary Brightness', 0, 50, 0)
+  submit_button = form.form_submit_button(label='Submit')
+
+  # Processing 
+  primary_img = Image.open(inputs.primary_img_path).convert('RGB')
+  depth_img = Image.open(inputs.depth_img_path).convert('RGB') 
+  ev_img = Image.open(inputs.ev_img_path).convert('RGB')
+  rendered_img = Image.open(BLANK_PLACEHOLDER).convert('RGB')
+  if submit_button:
+    rendered_img = process(inputs)
+
+  # View
+  primary_frame, depth_frame = st.beta_columns(2)
+  ev_frame, rendered_frame = st.beta_columns(2)
+  with primary_frame:
+    st.subheader("Primary Image")
+    st.image(primary_img)
+  with depth_frame:
+    st.subheader("Depth Map")
+    st.image(depth_img)
+  with ev_frame:
+    st.subheader('EV Minus Image (Optional)')
+    st.image(ev_img)  
+  with rendered_frame:
+    st.subheader('Rendered Image')
+    st.image(rendered_img)
+
+  # Client and Server Documentation
+  if submit_button:
+    # Client Download Link 
+    img_file_name = 'rendered.jpg'
+    st.markdown(get_image_download_link(rendered_img, img_file_name,'Download '+img_file_name), unsafe_allow_html=True)
+
+    # Server Documentation
+    record_test_case(inputs, rendered_img)
+
+# Before entering main, perform user authentication
+pwd = 'Leica_Labs'
+if inputs.pwd != pwd:
+  pwd_placeholder = st.sidebar.empty()
+  user_pwd = pwd_placeholder.text_input("Password:", value="", type="password")
+  inputs.pwd = pwd
+  if inputs.pwd == pwd:
+      pwd_placeholder.empty()
+      main()
+  elif inputs.pwd != '':
+      st.text(inputs.pwd)
+      st.error("Incorrect password. Please Try Again.")
 else:
-  inputs.primary_img_path = SAMPLE_IMAGES[image_set]['primary']
-  inputs.depth_img_path = SAMPLE_IMAGES[image_set]['depth']
-  inputs.ev_img_path = SAMPLE_IMAGES[image_set]['ev']
-  inputs.user_upload = False
+    main()
 
-# Set Input Parameters, TODO: Add defaults
-form = st.sidebar.form(key='settings') 
-inputs.ev = form.radio('EV Image', ['Yes', 'No']) 
-inputs.focus_coordinates = form.text_input('Focus Coordinates')
-inputs.lens_simulation = form.text_input('Lens Simulation')
-inputs.dof = form.text_input('Depth of Field')
-inputs.fstop = form.text_input('FStop')
-inputs.image_format = form.text_input('Image Format')
-inputs.depth_format = form.text_input('Depth Format')
-inputs.temporary_brightness = form.slider('Temporary Brightness', 0, 50, 0)
-submit_button = form.form_submit_button(label='Submit')
+# NOTE:
+# For setup, please install opencv and steamlit (that should be it for packages)
+# For transfering files to S3, install awscli, then run aws configure, aws sync to transfer files to S3 bucket of choice.  
 
-# Processing 
-primary_img = Image.open(inputs.primary_img_path).convert('RGB')
-depth_img = Image.open(inputs.depth_img_path).convert('RGB') 
-ev_img = Image.open(inputs.ev_img_path).convert('RGB')
-rendered_img = Image.open(BLANK_PLACEHOLDER).convert('RGB')
-if submit_button:
-  rendered_img = process(inputs)
 
-# View
-primary_frame, depth_frame = st.beta_columns(2)
-ev_frame, rendered_frame = st.beta_columns(2)
-with primary_frame:
-  st.subheader("Primary Image")
-  st.image(primary_img)
-with depth_frame:
-  st.subheader("Depth Map")
-  st.image(depth_img)
-with ev_frame:
-  st.subheader('EV Minus Image (Optional)')
-  st.image(ev_img)  
-with rendered_frame:
-  st.subheader('Rendered Image')
-  st.image(rendered_img)
-
-# Client and Server Documentation
-if submit_button:
-  # Client Download Link 
-  img_file_name = 'rendered.jpg'
-  st.markdown(get_image_download_link(rendered_img, img_file_name,'Download '+img_file_name), unsafe_allow_html=True)
-
-  # Server Documentation
-  record_test_case(inputs, rendered_img)
+# push to git -> setup a new aws instance -> share to slack
