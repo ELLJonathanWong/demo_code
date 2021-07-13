@@ -231,6 +231,3 @@ else:
 # NOTE:
 # For setup, please install opencv and steamlit (that should be it for packages)
 # For transfering files to S3, install awscli, then run aws configure, aws sync to transfer files to S3 bucket of choice.  
-
-
-# push to git -> setup a new aws instance -> share to slack
