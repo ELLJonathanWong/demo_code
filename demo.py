@@ -38,7 +38,7 @@ def process(inputs: SessionState) -> Image:
   # Psuedo Processing 
   stacked_img = np.vstack([primary_img, depth_img])
   if inputs.ev_img_path != BLANK_PLACEHOLDER:
-    ev_img = cv2.imread(str(inputs.ev_img_path))
+    ev_img = convert_from_image_to_cv2(Image.open(inputs.ev_img_path))
     stacked_img = np.vstack([primary_img, depth_img, ev_img])
   stacked_img = increase_brightness(stacked_img, inputs.temporary_brightness)
 
@@ -218,12 +218,11 @@ pwd = 'Leica_Labs'
 if inputs.pwd != pwd:
   pwd_placeholder = st.sidebar.empty()
   user_pwd = pwd_placeholder.text_input("Password:", value="", type="password")
-  inputs.pwd = pwd
+  inputs.pwd = user_pwd
   if inputs.pwd == pwd:
       pwd_placeholder.empty()
       main()
   elif inputs.pwd != '':
-      st.text(inputs.pwd)
       st.error("Incorrect password. Please Try Again.")
 else:
     main()
